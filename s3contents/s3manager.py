@@ -64,7 +64,25 @@ class S3ContentsManager(GenericContentsManager):
         if self.init_s3_hook is not None:
             self.init_s3_hook(self)
 
+    def get_versions(self, model, path):
+        versions = self._fs.resource.Bucket(self.bucket).object_versions.filter(Prefix=path)
+        version_ids = []
+
+        for version in versions:
+            obj = version.get()
+            # print(obj)
+            version_ids.append([obj.get('VersionId'), obj.get('LastModified').strftime("%m/%d/%Y, %H:%M:%S")])
+
+        return version_ids
+
     def _save_notebook(self, model, path):
+        print("RESOURCE IS: ")
+        print(self._fs.resource)
+        print("SAVING NOTEBOOK!!")
+        print(model['content']['metadata'])
+        print("Getting VERSIONS:: ", path)
+        print("GOT VERSIONS: ")
+        print(self.get_versions(model, path))
         nb_contents = from_dict(model['content'])
         self.check_and_sign(nb_contents, path)
         file_contents = json.dumps(model["content"])

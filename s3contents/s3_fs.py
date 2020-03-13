@@ -6,6 +6,7 @@ import sys
 import six
 import s3fs
 import base64
+import boto3
 
 from tornado.web import HTTPError
 from botocore.exceptions import ClientError
@@ -64,12 +65,19 @@ class S3FS(GenericFS):
         default_value=None
     ).tag(config=True, env="JPYNB_S3_SESSION_TOKEN")
 
+
     boto3_session = Any(help="Place to store customer boto3 session instance - likely passed in")
 
     def __init__(self, log, **kwargs):
         super(S3FS, self).__init__(**kwargs)
         self.log = log
-
+        print("CONNECTING TO RESOURCE....")
+        self.resource = boto3.resource(
+            's3',
+            aws_access_key_id=self.access_key_id,
+            aws_secret_access_key=self.secret_access_key,
+        )
+        print("RESOURCE CONNECTED...")
         client_kwargs = {
             "endpoint_url": self.endpoint_url,
             "region_name": self.region_name,
@@ -167,6 +175,7 @@ class S3FS(GenericFS):
 
     def read(self, path, format):
         path_ = self.path(path)
+        print("READING FILE...", path_, path)
         if not self.isfile(path):
             raise NoSuchFile(path_)
         with self.fs.open(path_, mode='rb') as f:
