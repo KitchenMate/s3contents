@@ -70,19 +70,26 @@ class S3ContentsManager(GenericContentsManager):
 
         for version in versions:
             obj = version.get()
-            # print(obj)
-            version_ids.append([obj.get('VersionId'), obj.get('LastModified').strftime("%m/%d/%Y, %H:%M:%S")])
+            version_id = obj.get('VersionId')
+            timestamp = obj.get('LastModified').strftime("%m/%d/%Y, %H:%M:%S")
+            tags = self._fs.client.get_object_tagging(
+                Bucket=self.bucket,
+                Key=path,
+                VersionId=version_id,
+            )['TagSet']
+            print("tags: ", tags)
+            version_ids.append({'version_id': version_id, 'timestamp': timestamp, 'tags': tags})
 
         return version_ids
 
     def _save_notebook(self, model, path):
-        print("RESOURCE IS: ")
-        print(self._fs.resource)
         print("SAVING NOTEBOOK!!")
         print(model['content']['metadata'])
-        print("Getting VERSIONS:: ", path)
-        print("GOT VERSIONS: ")
-        print(self.get_versions(model, path))
+        print("GETTING TAGS: ")
+        # versions = self.get_versions(model, path)
+        model['content']['metadata']['s3_versions'] = self.get_versions(model, path)
+
+        # print(self.get_versions(model, path))
         nb_contents = from_dict(model['content'])
         self.check_and_sign(nb_contents, path)
         file_contents = json.dumps(model["content"])

@@ -77,6 +77,11 @@ class S3FS(GenericFS):
             aws_access_key_id=self.access_key_id,
             aws_secret_access_key=self.secret_access_key,
         )
+        self.client = boto3.client(
+            's3',
+            aws_access_key_id=self.access_key_id,
+            aws_secret_access_key=self.secret_access_key,
+        )
         print("RESOURCE CONNECTED...")
         client_kwargs = {
             "endpoint_url": self.endpoint_url,
