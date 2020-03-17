@@ -65,22 +65,38 @@ class S3ContentsManager(GenericContentsManager):
             self.init_s3_hook(self)
 
     def _save_notebook(self, model, path):
-        print("SAVING NOTEBOOK!!")
-        #print(model['content']['metadata'])
-        #print("GETTING TAGS: ")
-        # versions = self.get_versions(model, path)
-        
+        def save_model():
+            nb_contents = from_dict(model['content'])
+            self.check_and_sign(nb_contents, path)
+            file_contents = json.dumps(model["content"])
+            self._fs.writenotebook(path, file_contents)
+            self.validate_notebook_model(model)
+            return model.get("message")
 
-        if "s3_active_version" in model['content']['metadata']:
-            latest_version = self._fs.get_latest_version(path)
-            if latest_version['VersionId'] == model['content']['metadata']['s3_active_version']['version_id']:
-                print("THIS VERSION CAN BE SAVED!")
+        m = model['content']['metadata']
+        has_versioning = ('s3_requested_version' in m) and ('s3_current_version' in m) and ('s3_latest_version' in m)
+
+        if not has_versioning:
+            return save_model()
+
+        version_changed = m['s3_requested_version'] != m['s3_current_version']
+        version_latest = m['s3_current_version'] == m['s3_latest_version']
+        version_requested = m['s3_latest_version'] != None
+
+        version_changed_not_latest = version_changed and (not version_latest) and version_requested
+        version_changed_latest = version_changed and version_latest and version_requested
+        content_changed_not_latest = ((not version_changed) or (not version_requested)) and (not version_latest)
+        content_changed_latest = ((not version_changed) or (not version_requested)) and version_latest
+        
+        if version_changed_not_latest:
+            self._fs.requested_version_id_lookup[path] = m['s3_requested_version']
+
+        if content_changed_not_latest:
+            raise Exception('Cannot overwrite older versions')
+
+        if content_changed_latest or version_changed_latest:
+            if version_changed_latest:
+                self._fs.requested_version_id_lookup[path] = m['s3_requested_version']
             else:
-                raise Exception('Cannot overwrite older versions')
-        # print(self.get_versions(model, path))
-        nb_contents = from_dict(model['content'])
-        self.check_and_sign(nb_contents, path)
-        file_contents = json.dumps(model["content"])
-        self._fs.writenotebook(path, file_contents)
-        self.validate_notebook_model(model)
-        return model.get("message")
+                self._fs.requested_version_id_lookup[path] = None
+            return save_model()

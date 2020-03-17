@@ -71,18 +71,10 @@ class S3FS(GenericFS):
     def __init__(self, log, **kwargs):
         super(S3FS, self).__init__(**kwargs)
         self.log = log
-        print("CONNECTING TO RESOURCE....")
-        self.resource = boto3.resource(
-            's3',
-            aws_access_key_id=self.access_key_id,
-            aws_secret_access_key=self.secret_access_key,
-        )
-        self.client = boto3.client(
-            's3',
-            aws_access_key_id=self.access_key_id,
-            aws_secret_access_key=self.secret_access_key,
-        )
-        print("RESOURCE CONNECTED...")
+
+        # Incase opening older version of file, store aws lookup to version_id
+        self.requested_version_id_lookup = {}
+
         client_kwargs = {
             "endpoint_url": self.endpoint_url,
             "region_name": self.region_name,
@@ -179,66 +171,63 @@ class S3FS(GenericFS):
         self.fs.touch(path_)
 
     def get_latest_version(self, path):
-        version_list = self.client.list_object_versions(Bucket=self.bucket, Prefix=path, MaxKeys=20)
+        version_list = self.fs.s3.list_object_versions(Bucket=self.bucket, Prefix=path, MaxKeys=20)
         return version_list['Versions'][0]
 
     def get_versions(self, path):
-        version_list = self.client.list_object_versions(Bucket=self.bucket, Prefix=path, MaxKeys=20)
-        # self.resource.Bucket(self.bucket).object_versions.filter(Prefix=path)
+        version_list = self.fs.s3.list_object_versions(Bucket=self.bucket, Prefix=path, MaxKeys=20)
         version_ids = []
-        # print(version_list)
         for version in version_list['Versions']:
-            # obj = version.get()
             version_id = version['VersionId']
             timestamp = version['LastModified'].strftime("%m/%d/%Y, %H:%M:%S")
-            # tags = self.client.get_object_tagging(
-            #     Bucket=self.bucket,
-            #     Key=path,
-            #     VersionId=version_id,
-            # )['TagSet']
-            #print("tags: ", tags)
-            tags = []
+            #TODO: Implement tags
+            tags = self.fs.s3.get_object_tagging(
+                Bucket=self.bucket,
+                Key=path,
+                VersionId=version_id,
+            )['TagSet']
             is_latest = version['IsLatest']
             version_ids.append({'version_id': version_id, 'timestamp': timestamp, 'tags': tags, 'is_latest': is_latest})
-            print(version)
         return version_ids
 
     def read(self, path, format):
         path_ = self.path(path)
-        active_version = False
-        print("READING FILE...", path_, path)
+        requested_version = None
+        file_extension = os.path.splitext(path)[1]
+        if path in self.requested_version_id_lookup:
+            requested_version = self.requested_version_id_lookup[path]
         if not self.isfile(path):
             raise NoSuchFile(path_)
 
-        with self.fs.open(path_, mode='rb') as f:
-            content = f.read()
-            json_content = json.loads(content)
-            print("THE PATH IS: ", path)
-
-            if 's3_active_version' in json_content['metadata']:
-                active_version = json_content['metadata']['s3_active_version']
-                print("CONTENT IS: ", active_version)
-            else:
-                json_content['metadata']['s3_versions'] = self.get_versions(path)
-                content = str.encode(json.dumps(json_content))
-
-        if active_version:
-            print(active_version)
-            print("Loading content again from active version!")
-            print("Version id is: ", active_version['version_id'])
-            # Temporarily make fs version aware 
-            # depending on if active version key exists
-            self.fs.version_aware = True
-            with self.fs.open(path_, mode='rb', version_id=active_version['version_id']) as f:
-                print("read file a second time")
+        def load_latest():
+            with self.fs.open(path_, mode='rb') as f:
                 content = f.read()
-                json_content = json.loads(content)
-                json_content['metadata']['s3_versions'] = self.get_versions(path)
-                json_content['metadata']['s3_active_version'] = active_version
-                print(json_content)
-                content = str.encode(json.dumps(json_content))
-                print("FILE READ AGAIN!!")
+                if file_extension == ".ipynb":
+                    json_content = json.loads(content)
+                    json_content['metadata']['s3_versions'] = self.get_versions(path)
+                    json_content['metadata']['s3_requested_version'] = None
+                    json_content['metadata']['s3_current_version'] = self.get_latest_version(path)['VersionId']
+                    json_content['metadata']['s3_latest_version'] = self.get_latest_version(path)['VersionId']
+                    content = str.encode(json.dumps(json_content))
+            return content
+
+        if requested_version and file_extension == ".ipynb":
+            self.fs.version_aware = True
+            with self.fs.open(path_, mode='rb', version_id=requested_version) as f:
+                content = f.read()
+                try:
+                    json_content = json.loads(content)
+                    json_content['metadata']['s3_versions'] = self.get_versions(path)
+                    json_content['metadata']['s3_requested_version'] = requested_version
+                    json_content['metadata']['s3_current_version'] = requested_version
+                    json_content['metadata']['s3_latest_version'] = self.get_latest_version(path)['VersionId']
+                    content = str.encode(json.dumps(json_content))
+                except Exception as e:
+                    self.requested_version_id_lookup = {}
+                    content = load_latest()
             self.fs.version_aware = False
+        else:
+            content = load_latest()
 
         if format is None or format == 'text':
             # Try to interpret as unicode if format is unknown or if unicode
@@ -266,7 +255,6 @@ class S3FS(GenericFS):
         return ret
 
     def write(self, path, content, format):
-        print("WRITING FILE.....")
         path_ = self.path(self.unprefix(path))
         self.log.debug("S3contents.S3FS: Writing file: `%s`", path_)
         if format not in {'text', 'base64'}:
@@ -288,7 +276,6 @@ class S3FS(GenericFS):
             f.write(content_)
 
     def writenotebook(self, path, content):
-        print("WRITING NOTEBOOK....")
         path_ = self.path(self.unprefix(path))
         self.log.debug("S3contents.S3FS: Writing notebook: `%s`", path_)
         with self.fs.open(path_, mode='wb') as f:
