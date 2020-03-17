@@ -69,6 +69,7 @@ class GenericContentsManager(ContentsManager, HasTraits):
 
     def get(self, path, content=True, type=None, format=None):
         # Get a file or directory model.
+        print("GETTING A FILE...")
         self.log.debug("S3contents.GenericManager.get] path('%s') type(%s) format(%s)", path, type, format)
         path = path.strip('/')
 

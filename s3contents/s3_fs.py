@@ -7,7 +7,7 @@ import six
 import s3fs
 import base64
 import boto3
-
+import json
 from tornado.web import HTTPError
 from botocore.exceptions import ClientError
 
@@ -178,13 +178,68 @@ class S3FS(GenericFS):
         self.log.debug("S3contents.S3FS: Making dir: `%s`", path_)
         self.fs.touch(path_)
 
+    def get_latest_version(self, path):
+        version_list = self.client.list_object_versions(Bucket=self.bucket, Prefix=path, MaxKeys=20)
+        return version_list['Versions'][0]
+
+    def get_versions(self, path):
+        version_list = self.client.list_object_versions(Bucket=self.bucket, Prefix=path, MaxKeys=20)
+        # self.resource.Bucket(self.bucket).object_versions.filter(Prefix=path)
+        version_ids = []
+        # print(version_list)
+        for version in version_list['Versions']:
+            # obj = version.get()
+            version_id = version['VersionId']
+            timestamp = version['LastModified'].strftime("%m/%d/%Y, %H:%M:%S")
+            # tags = self.client.get_object_tagging(
+            #     Bucket=self.bucket,
+            #     Key=path,
+            #     VersionId=version_id,
+            # )['TagSet']
+            #print("tags: ", tags)
+            tags = []
+            is_latest = version['IsLatest']
+            version_ids.append({'version_id': version_id, 'timestamp': timestamp, 'tags': tags, 'is_latest': is_latest})
+            print(version)
+        return version_ids
+
     def read(self, path, format):
         path_ = self.path(path)
+        active_version = False
         print("READING FILE...", path_, path)
         if not self.isfile(path):
             raise NoSuchFile(path_)
+
         with self.fs.open(path_, mode='rb') as f:
             content = f.read()
+            json_content = json.loads(content)
+            print("THE PATH IS: ", path)
+
+            if 's3_active_version' in json_content['metadata']:
+                active_version = json_content['metadata']['s3_active_version']
+                print("CONTENT IS: ", active_version)
+            else:
+                json_content['metadata']['s3_versions'] = self.get_versions(path)
+                content = str.encode(json.dumps(json_content))
+
+        if active_version:
+            print(active_version)
+            print("Loading content again from active version!")
+            print("Version id is: ", active_version['version_id'])
+            # Temporarily make fs version aware 
+            # depending on if active version key exists
+            self.fs.version_aware = True
+            with self.fs.open(path_, mode='rb', version_id=active_version['version_id']) as f:
+                print("read file a second time")
+                content = f.read()
+                json_content = json.loads(content)
+                json_content['metadata']['s3_versions'] = self.get_versions(path)
+                json_content['metadata']['s3_active_version'] = active_version
+                print(json_content)
+                content = str.encode(json.dumps(json_content))
+                print("FILE READ AGAIN!!")
+            self.fs.version_aware = False
+
         if format is None or format == 'text':
             # Try to interpret as unicode if format is unknown or if unicode
             # was explicitly requested.
@@ -211,6 +266,7 @@ class S3FS(GenericFS):
         return ret
 
     def write(self, path, content, format):
+        print("WRITING FILE.....")
         path_ = self.path(self.unprefix(path))
         self.log.debug("S3contents.S3FS: Writing file: `%s`", path_)
         if format not in {'text', 'base64'}:
@@ -232,6 +288,7 @@ class S3FS(GenericFS):
             f.write(content_)
 
     def writenotebook(self, path, content):
+        print("WRITING NOTEBOOK....")
         path_ = self.path(self.unprefix(path))
         self.log.debug("S3contents.S3FS: Writing notebook: `%s`", path_)
         with self.fs.open(path_, mode='wb') as f:

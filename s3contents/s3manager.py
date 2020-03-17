@@ -64,31 +64,19 @@ class S3ContentsManager(GenericContentsManager):
         if self.init_s3_hook is not None:
             self.init_s3_hook(self)
 
-    def get_versions(self, model, path):
-        versions = self._fs.resource.Bucket(self.bucket).object_versions.filter(Prefix=path)
-        version_ids = []
-
-        for version in versions:
-            obj = version.get()
-            version_id = obj.get('VersionId')
-            timestamp = obj.get('LastModified').strftime("%m/%d/%Y, %H:%M:%S")
-            tags = self._fs.client.get_object_tagging(
-                Bucket=self.bucket,
-                Key=path,
-                VersionId=version_id,
-            )['TagSet']
-            print("tags: ", tags)
-            version_ids.append({'version_id': version_id, 'timestamp': timestamp, 'tags': tags})
-
-        return version_ids
-
     def _save_notebook(self, model, path):
         print("SAVING NOTEBOOK!!")
-        print(model['content']['metadata'])
-        print("GETTING TAGS: ")
+        #print(model['content']['metadata'])
+        #print("GETTING TAGS: ")
         # versions = self.get_versions(model, path)
-        model['content']['metadata']['s3_versions'] = self.get_versions(model, path)
+        
 
+        if "s3_active_version" in model['content']['metadata']:
+            latest_version = self._fs.get_latest_version(path)
+            if latest_version['VersionId'] == model['content']['metadata']['s3_active_version']['version_id']:
+                print("THIS VERSION CAN BE SAVED!")
+            else:
+                raise Exception('Cannot overwrite older versions')
         # print(self.get_versions(model, path))
         nb_contents = from_dict(model['content'])
         self.check_and_sign(nb_contents, path)
