@@ -95,6 +95,15 @@ class S3ContentsManager(GenericContentsManager):
             raise Exception('Cannot overwrite older versions')
 
         if content_changed_latest or version_changed_latest:
+            if 's3_create_release' in m:
+                if 's3_latest_release_tag' in m:
+                    m['s3_latest_release_tag'] = int(m['s3_latest_release_tag']) + 1
+                else:
+                    m['s3_latest_release_tag'] = 0
+
+                self._fs.create_release_tag(path, m['s3_latest_release_tag'], m['s3_create_release'])
+
+                del m['s3_create_release']
             if version_changed_latest:
                 self._fs.requested_version_id_lookup[path] = m['s3_requested_version']
             else:

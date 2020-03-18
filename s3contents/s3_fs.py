@@ -170,6 +170,25 @@ class S3FS(GenericFS):
         self.log.debug("S3contents.S3FS: Making dir: `%s`", path_)
         self.fs.touch(path_)
 
+    def create_release_tag(self, path, tag, msg):
+        latest_version_id = self.get_latest_version(path)['VersionId']
+        self.fs.s3.put_object_tagging(
+            Bucket=self.bucket,
+            Key=path,
+            VersionId=latest_version_id,
+            Tagging={
+                'TagSet': [
+                    {
+                        'Key': 'release',
+                        'Value': str(tag)
+                    },
+                    {
+                        'Key': 'message',
+                        'Value': msg
+                    }
+                ]
+            }
+        )
     def get_latest_version(self, path):
         version_list = self.fs.s3.list_object_versions(Bucket=self.bucket, Prefix=path, MaxKeys=20)
         return version_list['Versions'][0]
